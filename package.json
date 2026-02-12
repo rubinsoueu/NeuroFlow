@@ -4,14 +4,19 @@
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
+    "start:tunnel": "expo start --tunnel",
+    "start:lan": "expo start --lan",
+    "start:multi": "expo start --tunnel",
     "android": "expo start --android",
-    "ios": "expo start --ios"
+    "ios": "expo start --ios",
+    "web": "expo start --web"
   },
   "dependencies": {
-    "expo": "~50.0.0",
-    "expo-av": "~13.10.3",
-    "react-native-webview": "13.6.2",
-    "react": "18.2.0",
-    "react-native": "0.73.2"
+    "@react-native-async-storage/async-storage": "^2.2.0",
+    "expo": "~54.0.0",
+    "expo-av": "~16.0.8",
+    "react": "19.1.0",
+    "react-native": "0.81.0",
+    "react-native-webview": "13.15.0"
   }
 }

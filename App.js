@@ -1,134 +1,76 @@
-import React, { useState, useRef } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, SafeAreaView, StatusBar } from 'react-native';
-import { WebView } from 'react-native-webview';
-import { SynthHTML } from './SynthEngine';
-import { MOOD_MAP } from './MoodConstants';
+import React, { useState } from 'react';
+import { StyleSheet, StatusBar } from 'react-native';
+import OnboardingScreen from './screens/OnboardingScreen';
+import SessionScreen from './screens/SessionScreen';
+import { SessionStorage, createSessionData } from './services/SessionStorage';
 
 export default function App() {
-  const [currentMood, setCurrentMood] = useState('RAIVA');
-  const [isTransforming, setIsTransforming] = useState(false);
-  const webviewRef = useRef(null);
+  const [currentScreen, setCurrentScreen] = useState('ONBOARDING'); // 'ONBOARDING' | 'SESSION'
+  const [sessionConfig, setSessionConfig] = useState(null);
+  const [sessionStartTime, setSessionStartTime] = useState(null);
 
-  const startTransformation = () => {
-    setIsTransforming(true);
-    
-    // Puxa as configurações do MoodConstants para a transição
-    const config = { 
-      type: 'ADJUST', 
-      bpm: MOOD_MAP.RAIVA.targetBPM, 
-      frequency: MOOD_MAP.RAIVA.frequency 
-    };
+  const handleStartSession = (config) => {
+    setSessionConfig(config);
+    setSessionStartTime(Date.now());
+    setCurrentScreen('SESSION');
+  };
 
-    // Envia o comando para o motor de áudio A (Sintetizador)
-    if (webviewRef.current) {
-      webviewRef.current.postMessage(JSON.stringify(config));
+  const handleEndSession = async () => {
+    try {
+      if (sessionConfig && sessionStartTime) {
+        // Calcula duração da sessão
+        const duration = Math.floor((Date.now() - sessionStartTime) / 1000); // segundos
+
+        // Salva sessão no histórico
+        const sessionData = createSessionData({
+          initialStateId: sessionConfig.initialState.id,
+          initialStateLabel: sessionConfig.initialState.label,
+          taskId: sessionConfig.task.id,
+          taskLabel: sessionConfig.task.label,
+          targetStateId: sessionConfig.targetState.id,
+          targetStateLabel: sessionConfig.targetState.label,
+          duration: duration,
+          feedbacks: [], // TODO: Coletar feedbacks da sessão
+          completed: duration >= (sessionConfig.task.recommendedDuration * 60),
+        });
+
+        const saved = await SessionStorage.saveSession(sessionData);
+
+        if (saved) {
+          console.log('[App] Session saved successfully:', saved.id);
+        } else {
+          console.error('[App] Failed to save session data');
+        }
+      }
+    } catch (error) {
+      console.error('[App] Error in handleEndSession:', error);
+      // Continue anyway para não travar o app
+    } finally {
+      // Volta para onboarding sempre, mesmo se salvar falhou
+      setCurrentScreen('ONBOARDING');
+      setSessionConfig(null);
+      setSessionStartTime(null);
     }
-    
-    // Simula a mudança visual de estado
-    setTimeout(() => {
-      setCurrentMood('CONCENTRACAO');
-      setIsTransforming(false);
-    }, 5000); // 5 segundos para demonstração no teste
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: MOOD_MAP[currentMood].color }]}>
-      <StatusBar barStyle="light-content" />
-      
-      <View style={styles.content}>
-        <Text style={styles.title}>NeuroFlow</Text>
-        
-        <View style={styles.statusCard}>
-          <Text style={styles.label}>Estado Atual:</Text>
-          <Text style={styles.moodText}>
-            {isTransforming ? "Transformando..." : MOOD_MAP[currentMood].label}
-          </Text>
-        </View>
+    <>
+      <StatusBar barStyle="light-content" backgroundColor="#0A0E27" />
 
-        <TouchableOpacity 
-          style={styles.button} 
-          onPress={startTransformation}
-          disabled={isTransforming}
-        >
-          <Text style={styles.buttonText}>
-            {currentMood === 'RAIVA' ? "Alcançar Foco Profundo" : "Reiniciar Sessão"}
-          </Text>
-        </TouchableOpacity>
-      </View>
+      {currentScreen === 'ONBOARDING' && (
+        <OnboardingScreen onStart={handleStartSession} />
+      )}
 
-      {/* Camada invisível que processa o áudio em tempo real */}
-      <View style={styles.engineContainer}>
-        <WebView
-          ref={webviewRef}
-          originWhitelist={['*']}
-          source={{ html: SynthHTML }}
-          onMessage={(event) => console.log("Audio Engine Log:", event.nativeEvent.data)}
-          javaScriptEnabled={true}
-          domStorageEnabled={true}
+      {currentScreen === 'SESSION' && sessionConfig && (
+        <SessionScreen
+          sessionConfig={sessionConfig}
+          onEnd={handleEndSession}
         />
-      </View>
-    </SafeAreaView>
+      )}
+    </>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    transition: 'background-color 2s ease', // Note: transições suaves funcionam melhor com Animated API, mas para o MVP o estilo dinâmico basta
-  },
-  content: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  title: {
-    fontSize: 42,
-    fontWeight: '900',
-    color: '#fff',
-    marginBottom: 40,
-    letterSpacing: -1,
-  },
-  statusCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    padding: 30,
-    borderRadius: 25,
-    alignItems: 'center',
-    width: '100%',
-    marginBottom: 40,
-  },
-  label: {
-    color: '#fff',
-    fontSize: 14,
-    textTransform: 'uppercase',
-    opacity: 0.8,
-  },
-  moodText: {
-    color: '#fff',
-    fontSize: 28,
-    fontWeight: 'bold',
-    marginTop: 10,
-  },
-  button: {
-    backgroundColor: '#fff',
-    paddingVertical: 20,
-    paddingHorizontal: 40,
-    borderRadius: 50,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4.65,
-    elevation: 8,
-  },
-  buttonText: {
-    color: '#000',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  engineContainer: {
-    height: 0,
-    width: 0,
-    opacity: 0,
-    position: 'absolute',
-  }
+  // Styles movidos para as respectivas telas
 });
