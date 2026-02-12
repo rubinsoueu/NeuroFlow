@@ -134,8 +134,10 @@ export default function SessionScreen({ sessionConfig, onEnd }) {
         setupTimer();
         setupFeedbackPrompts();
 
-        // Phase 2: After a brief matching period, begin ISO transition
-        const MATCHING_DURATION = 15000; // 15 seconds of matching first
+        // Phase 2: After a generous matching period, begin ISO transition
+        // Longer matching = user fully settles into initial state before
+        // the gradual transition begins (imperceptible onset)
+        const MATCHING_DURATION = 30000; // 30 seconds of matching first
         setTimeout(() => {
             if (!isMountedRef.current) return;
             beginTransition();

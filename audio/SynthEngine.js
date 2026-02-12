@@ -58,6 +58,12 @@ export const SynthHTML = `
             chords: [],
             chordIndex: 0,
             melodyIndex: 0,
+            // Crossfade state for gradual scale/chord transitions
+            oldScale: [],
+            oldChords: [],
+            targetScale: [],
+            targetChords: [],
+            scaleCrossfadeProgress: 1, // 1 = fully on current scale
         };
 
         // ========================================================
@@ -205,33 +211,53 @@ export const SynthHTML = `
         /**
          * Map timbreBrightness (0-1) to filter frequency and oscillator params
          */
-        function applyTimbre(brightness) {
+        // Track last oscillator type to avoid unnecessary switches
+        let lastOscType = 'sine';
+
+        function applyTimbre(brightness, rampSec) {
+            rampSec = rampSec || 5;
             // Pad filter: 200-3000 Hz based on brightness
             const padFreq = 200 + (brightness * 2800);
-            padFilter.frequency.rampTo(padFreq, 5);
+            padFilter.frequency.rampTo(padFreq, rampSec);
 
             // Melody FM modulation index: brighter = more harmonics
-            melodySynth.modulationIndex.rampTo(0.3 + (brightness * 2), 5);
+            melodySynth.modulationIndex.rampTo(0.3 + (brightness * 2), rampSec);
+
+            // Melody harmonicity: brighter = richer harmonics
+            melodySynth.harmonicity.rampTo(2 + (brightness * 4), rampSec);
 
             // Ambient noise filter
             const noiseFreq = 200 + (brightness * 1500);
-            ambientFilter.frequency.rampTo(noiseFreq, 5);
+            ambientFilter.frequency.rampTo(noiseFreq, rampSec);
 
-            // Adjust oscillator type based on brightness
-            if (brightness < 0.3) {
-                padSynth.set({ oscillator: { type: 'sine' } });
-            } else if (brightness < 0.6) {
-                padSynth.set({ oscillator: { type: 'triangle' } });
+            // Oscillator type: use hysteresis to avoid rapid switching
+            // and only switch when brightness is firmly in a zone
+            let targetType;
+            if (brightness < 0.25) {
+                targetType = 'sine';
+            } else if (brightness < 0.55) {
+                targetType = 'triangle';
             } else {
-                padSynth.set({ oscillator: { type: 'fatsawtooth', spread: 20, count: 3 } });
+                targetType = 'fatsawtooth';
+            }
+
+            // Only switch if type actually changed — avoids pops
+            if (targetType !== lastOscType) {
+                lastOscType = targetType;
+                if (targetType === 'fatsawtooth') {
+                    padSynth.set({ oscillator: { type: 'fatsawtooth', spread: 20, count: 3 } });
+                } else {
+                    padSynth.set({ oscillator: { type: targetType } });
+                }
             }
         }
 
         /**
          * Apply effects based on current profile
          */
-        function applyEffects(profile) {
+        function applyEffects(profile, rampSec) {
             const fx = profile.effects || {};
+            rampSec = rampSec || 5;
 
             // Reverb
             if (fx.reverbDecay !== undefined) {
@@ -240,16 +266,16 @@ export const SynthHTML = `
                 melodyReverb.decay = fx.reverbDecay || 3;
             }
             if (fx.reverbWet !== undefined) {
-                padReverb.wet.rampTo(fx.reverbWet, 5);
-                melodyReverb.wet.rampTo(fx.reverbWet, 5);
+                padReverb.wet.rampTo(fx.reverbWet, rampSec);
+                melodyReverb.wet.rampTo(fx.reverbWet, rampSec);
             }
 
             // Delay
             if (fx.delayTime !== undefined) {
-                melodyDelay.delayTime.rampTo(fx.delayTime || 0.25, 5);
+                melodyDelay.delayTime.rampTo(fx.delayTime || 0.25, rampSec);
             }
             if (fx.delayWet !== undefined) {
-                melodyDelay.wet.rampTo(fx.delayWet || 0.1, 5);
+                melodyDelay.wet.rampTo(fx.delayWet || 0.1, rampSec);
             }
 
             // Chorus
@@ -257,7 +283,7 @@ export const SynthHTML = `
                 padChorus.frequency.value = fx.chorusFreq || 1.5;
             }
             if (fx.chorusWet !== undefined) {
-                padChorus.wet.rampTo(fx.chorusWet || 0, 5);
+                padChorus.wet.rampTo(fx.chorusWet || 0, rampSec);
             }
         }
 
@@ -265,7 +291,15 @@ export const SynthHTML = `
          * Generate next melody note based on scale and activity level
          */
         function getNextMelodyNote() {
-            const scale = engineState.scale;
+            // During transitions, blend old and target scales
+            const cfProgress = engineState.scaleCrossfadeProgress;
+            let scale;
+            if (cfProgress < 1 && engineState.oldScale.length > 0 && engineState.targetScale.length > 0) {
+                // Probabilistically pick from old or new scale
+                scale = Math.random() < cfProgress ? engineState.targetScale : engineState.oldScale;
+            } else {
+                scale = engineState.scale;
+            }
             if (!scale || scale.length === 0) return null;
 
             const activity = engineState.current.melodicActivity;
@@ -278,7 +312,7 @@ export const SynthHTML = `
             const maxIdx = Math.min(scale.length - 1, minIdx + range);
 
             // Weighted random: prefer stepwise motion (interval 1-2)
-            const currentIdx = engineState.melodyIndex;
+            const currentIdx = Math.min(engineState.melodyIndex, scale.length - 1);
             const intervals = [-2, -1, 0, 1, 2, 3, -3];
             const weights = [0.1, 0.25, 0.15, 0.25, 0.1, 0.08, 0.07];
 
@@ -376,16 +410,26 @@ export const SynthHTML = `
             }, '8n');
 
             // CHORD PROGRESSION LOOP - change chord every N bars
+            // During transitions, crossfade between old and target chords
             chordLoop = new Tone.Loop((time) => {
                 if (!engineState.isPlaying) return;
-                if (!engineState.chords || engineState.chords.length === 0) return;
+
+                // Pick chord source based on crossfade progress
+                const cfProgress = engineState.scaleCrossfadeProgress;
+                let chords;
+                if (cfProgress < 1 && engineState.oldChords.length > 0 && engineState.targetChords.length > 0) {
+                    chords = Math.random() < cfProgress ? engineState.targetChords : engineState.oldChords;
+                } else {
+                    chords = engineState.chords;
+                }
+                if (!chords || chords.length === 0) return;
 
                 // Release previous chord gently
                 padSynth.releaseAll(time);
 
                 // Play next chord
-                const chordIdx = engineState.chordIndex % engineState.chords.length;
-                const chord = engineState.chords[chordIdx];
+                const chordIdx = engineState.chordIndex % chords.length;
+                const chord = chords[chordIdx];
                 if (chord && chord.length > 0) {
                     const vel = 0.35 + (engineState.current.harmonicComplexity * 0.2);
                     padSynth.triggerAttack(chord, time, vel);
@@ -515,8 +559,9 @@ export const SynthHTML = `
         /**
          * Apply a music profile to all layers
          */
-        function applyMusicProfile(profile) {
+        function applyMusicProfile(profile, rampSec) {
             if (!profile) return;
+            rampSec = rampSec || 5;
 
             // Update current state
             engineState.current.tempoBPM = profile.tempoBPM || 72;
@@ -526,25 +571,27 @@ export const SynthHTML = `
             engineState.current.melodicActivity = profile.melodicActivity || 0.25;
             engineState.current.dynamicRange = profile.dynamicRange || 0.2;
 
-            // Apply timbre
-            applyTimbre(profile.timbreBrightness || 0.4);
+            // Apply timbre with dynamic ramp
+            applyTimbre(profile.timbreBrightness || 0.4, rampSec);
 
             // Apply effects
-            applyEffects(profile);
+            applyEffects(profile, rampSec);
 
             // Set rhythm gain based on density
-            rhythmGain.gain.rampTo(0.03 + (profile.rhythmDensity || 0.3) * 0.12, 5);
+            rhythmGain.gain.rampTo(0.03 + (profile.rhythmDensity || 0.3) * 0.12, rampSec);
 
             // Set melody gain based on activity
-            melodyGain.gain.rampTo(0.08 + (profile.melodicActivity || 0.25) * 0.15, 5);
+            melodyGain.gain.rampTo(0.08 + (profile.melodicActivity || 0.25) * 0.15, rampSec);
 
             // Set pad gain based on complexity
-            padGain.gain.rampTo(0.1 + (profile.harmonicComplexity || 0.3) * 0.15, 5);
+            padGain.gain.rampTo(0.1 + (profile.harmonicComplexity || 0.3) * 0.15, rampSec);
         }
 
         /**
          * Set binaural beat frequencies
          */
+        let lastBinauralLog = 0;
+
         function setBinaural(binauralFreq, carrierFreq, rampTime) {
             rampTime = rampTime || 10;
             engineState.current.binauralFreq = binauralFreq;
@@ -553,7 +600,12 @@ export const SynthHTML = `
             binauralLeft.frequency.rampTo(carrierFreq, rampTime);
             binauralRight.frequency.rampTo(carrierFreq + binauralFreq, rampTime);
 
-            sendLog('Binaural: ' + binauralFreq + 'Hz beat, ' + carrierFreq + 'Hz carrier');
+            // Throttle binaural logs to every 10 seconds
+            const now = Date.now();
+            if (now - lastBinauralLog > 10000) {
+                lastBinauralLog = now;
+                sendLog('Binaural: ' + binauralFreq.toFixed(1) + 'Hz beat, ' + carrierFreq.toFixed(0) + 'Hz carrier');
+            }
         }
 
         /**
@@ -586,16 +638,24 @@ export const SynthHTML = `
                 clearInterval(engineState.transitionTimer);
             }
 
-            // Scale/chord transition: swap immediately
-            // (the musical parameters like brightness, complexity, etc.
-            //  will transition gradually making it sound natural)
-            engineState.scale = targetScale || engineState.scale;
-            engineState.chords = targetChords || engineState.chords;
-            engineState.chordIndex = 0;
-            engineState.melodyIndex = Math.floor(engineState.scale.length / 2);
+            // Gradual scale/chord crossfade instead of immediate swap
+            // The melody and chord loops will probabilistically blend
+            // old and target scales/chords based on crossfade progress
+            engineState.oldScale = [...engineState.scale];
+            engineState.oldChords = [...engineState.chords];
+            engineState.targetScale = targetScale || engineState.scale;
+            engineState.targetChords = targetChords || engineState.chords;
+            engineState.scaleCrossfadeProgress = 0;
+            // Keep current scale as reference, will be updated at completion
+            engineState.melodyIndex = Math.min(
+                engineState.melodyIndex,
+                Math.max((targetScale || engineState.scale).length - 1, 0)
+            );
 
-            // Gradual transition every 2 seconds
-            const UPDATE_INTERVAL = 2000; // ms
+            // Ultra-smooth transition: 500ms ticks with 3s Tone.js ramps
+            // Each ramp overlaps the next tick, creating continuous interpolation
+            const UPDATE_INTERVAL = 500; // ms
+            const RAMP_SEC = 3; // Longer ramps = smoother overlap between ticks
             engineState.transitionTimer = setInterval(() => {
                 const elapsed = Tone.now() - engineState.transitionStartTime;
                 const progress = Math.min(1, elapsed / durationSeconds);
@@ -604,10 +664,20 @@ export const SynthHTML = `
                 // Lerp helper
                 const lerp = (a, b, t) => a + (b - a) * t;
 
-                // Smooth easing (ease-in-out)
-                const eased = progress < 0.5
-                    ? 2 * progress * progress
-                    : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+                // Smootherstep easing (Ken Perlin, 5th order polynomial)
+                // C2 continuity: zero 1st AND 2nd derivatives at t=0 and t=1
+                // Produces imperceptible entry/exit from the transition
+                const t = progress;
+                const baseEased = t * t * t * (t * (t * 6 - 15) + 10);
+
+                // Organic micro-variation: subtle jitter (±1.5% of delta)
+                // Strongest in the middle of the transition, zero at endpoints
+                const jitter = (Math.random() - 0.5) * 0.03;
+                const bellShape = 1 - Math.abs(2 * baseEased - 1); // peaks at eased=0.5
+                const eased = Math.max(0, Math.min(1, baseEased + jitter * bellShape));
+
+                // Update scale crossfade progress (follows the main easing)
+                engineState.scaleCrossfadeProgress = eased;
 
                 // Interpolate all musical parameters
                 const interpolated = {
@@ -629,16 +699,16 @@ export const SynthHTML = `
                 interpolated.effects.delayWet = lerp(startFx.delayWet || 0.1, targetFx.delayWet || 0.1, eased);
                 interpolated.effects.chorusWet = lerp(startFx.chorusWet || 0, targetFx.chorusWet || 0, eased);
 
-                // Apply interpolated profile
-                applyMusicProfile(interpolated);
+                // Apply interpolated profile with dynamic ramp time
+                applyMusicProfile(interpolated, RAMP_SEC);
 
-                // BPM ramp
-                Tone.Transport.bpm.rampTo(interpolated.tempoBPM, 3);
+                // BPM ramp (slightly longer to avoid tempo glitches)
+                Tone.Transport.bpm.rampTo(interpolated.tempoBPM, RAMP_SEC);
 
                 // Binaural ramp
                 const interpBinaural = lerp(startSnapshot.binauralFreq, targetBinauralFreq, eased);
                 const interpCarrier = lerp(startSnapshot.carrierFreq, targetCarrierFreq, eased);
-                setBinaural(interpBinaural, interpCarrier, 3);
+                setBinaural(interpBinaural, interpCarrier, RAMP_SEC);
 
                 // Send progress to React Native
                 sendProgress(progress);
@@ -648,6 +718,12 @@ export const SynthHTML = `
                     clearInterval(engineState.transitionTimer);
                     engineState.transitionTimer = null;
                     engineState.currentProfile = targetProfile;
+                    // Finalize scale/chord crossfade
+                    engineState.scale = engineState.targetScale;
+                    engineState.chords = engineState.targetChords;
+                    engineState.scaleCrossfadeProgress = 1;
+                    engineState.oldScale = [];
+                    engineState.oldChords = [];
                     sendLog('Transition complete - arrived at target state');
                     sendMessage({ type: 'TRANSITION_COMPLETE' });
                 }
