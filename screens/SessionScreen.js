@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
     View,
     Text,
@@ -9,9 +9,9 @@ import {
     Animated,
     Dimensions,
 } from 'react-native';
-import { NativeAudioEngine } from '../audio/NativeAudioEngine';
-import { getBinauralUrlForFrequency } from '../audio/AudioUrls';
-import { getLayerConfig } from '../data/FrequencyMappings';
+import { WebView } from 'react-native-webview';
+import { SynthHTML } from '../audio/SynthEngine';
+import { getScale, getChordProgression, getLayerConfig } from '../data/FrequencyMappings';
 
 const { width } = Dimensions.get('window');
 
@@ -19,85 +19,162 @@ export default function SessionScreen({ sessionConfig, onEnd }) {
     const { initialState, task, targetState } = sessionConfig;
 
     const [isPlaying, setIsPlaying] = useState(false);
-    const [currentState, setCurrentState] = useState('TRANSITIONING');
+    const [isEngineReady, setIsEngineReady] = useState(false);
+    const [currentPhase, setCurrentPhase] = useState('INITIALIZING'); // INITIALIZING | MATCHING | TRANSITIONING | ARRIVED
     const [elapsedTime, setElapsedTime] = useState(0);
+    const [transitionProgress, setTransitionProgress] = useState(0);
     const [showFeedback, setShowFeedback] = useState(false);
     const [volume, setVolume] = useState(0.7);
 
-    const audioEngine = useRef(new NativeAudioEngine()).current;
+    const webviewRef = useRef(null);
     const pulseAnim = useRef(new Animated.Value(1)).current;
-    const animationRef = useRef(null); // Para parar animação no cleanup
-    const isMountedRef = useRef(true); // Previne state updates após unmount
+    const glowAnim = useRef(new Animated.Value(0)).current;
+    const animationRef = useRef(null);
+    const glowAnimRef = useRef(null);
+    const isMountedRef = useRef(true);
     const timerRef = useRef(null);
     const feedbackTimerRef = useRef(null);
-    const currentStateRef = useRef('TRANSITIONING'); // Para closure atualizada
+    const currentPhaseRef = useRef('INITIALIZING');
 
+    // Keep ref in sync
     useEffect(() => {
-        // Marca estado atual
-        currentStateRef.current = currentState;
-    }, [currentState]);
+        currentPhaseRef.current = currentPhase;
+    }, [currentPhase]);
 
+    // Cleanup on unmount
     useEffect(() => {
         isMountedRef.current = true;
-        initializeAudio();
-        setupTimer();
-        setupFeedbackPrompts();
 
         return () => {
             isMountedRef.current = false;
-
-            // Limpa timers
             if (timerRef.current) clearInterval(timerRef.current);
             if (feedbackTimerRef.current) clearInterval(feedbackTimerRef.current);
-
-            // Para animação
-            if (animationRef.current) {
-                animationRef.current.stop();
-            }
-
-            // Para áudio
-            audioEngine.stop();
+            if (animationRef.current) animationRef.current.stop();
+            if (glowAnimRef.current) glowAnimRef.current.stop();
+            // Stop audio via webview
+            sendCommand({ type: 'STOP' });
         };
     }, []);
 
-    const initializeAudio = async () => {
-        console.log('[SessionScreen] Initializing native audio engine...');
-        await audioEngine.initialize();
+    // ========================================================
+    // AUDIO ENGINE COMMUNICATION
+    // ========================================================
 
-        if (isMountedRef.current) {
-            await startSession();
+    const sendCommand = useCallback((command) => {
+        if (webviewRef.current) {
+            webviewRef.current.postMessage(JSON.stringify(command));
         }
-    };
+    }, []);
 
-    const startSession = async () => {
-        if (!isMountedRef.current) {
-            console.log('[SessionScreen] Component unmounted, aborting session start');
-            return;
-        }
-
-        console.log('[SessionScreen] Starting audio session...');
-
+    const handleWebViewMessage = useCallback((event) => {
         try {
-            const layerConfig = getLayerConfig(initialState, targetState);
-            const rampTime = task.transitionTime * 60;
+            const data = JSON.parse(event.nativeEvent.data);
 
-            // Inicia com frequência alvo
-            await audioEngine.start(
-                targetState.targetFrequency,
-                targetState.carrierFrequency
-            );
+            switch (data.type) {
+                case 'ENGINE_READY':
+                    console.log('[Session] Engine ready, starting music...');
+                    if (isMountedRef.current) {
+                        setIsEngineReady(true);
+                        startSession();
+                    }
+                    break;
 
-            if (isMountedRef.current) {
-                setIsPlaying(true);
-                startPulseAnimation();
+                case 'LOG':
+                    console.log('[SynthEngine]', data.message);
+                    break;
 
-                console.log('[SessionScreen] Audio session started successfully!');
-                console.log('[SessionScreen] Playing binaural beat:', targetState.targetFrequency, 'Hz');
+                case 'TRANSITION_PROGRESS':
+                    if (isMountedRef.current) {
+                        setTransitionProgress(data.progress);
+                    }
+                    break;
+
+                case 'TRANSITION_COMPLETE':
+                    if (isMountedRef.current) {
+                        setCurrentPhase('ARRIVED');
+                    }
+                    break;
             }
         } catch (error) {
-            console.error('[SessionScreen] Failed to start session:', error);
+            console.error('[Session] WebView message error:', error);
         }
-    };
+    }, []);
+
+    // ========================================================
+    // SESSION LIFECYCLE
+    // ========================================================
+
+    const startSession = useCallback(() => {
+        if (!isMountedRef.current) return;
+
+        console.log('[Session] Starting musical session...');
+        console.log('[Session] Initial:', initialState.id, '→ Target:', targetState.id);
+
+        // Get scale and chords for initial state (ISO matching)
+        const initialScale = getScale(
+            initialState.musicProfile.scale.root,
+            initialState.musicProfile.scale.mode
+        );
+        const initialChords = getChordProgression(initialState.id);
+
+        // Phase 1: Start with music that MATCHES the user's current state
+        setCurrentPhase('MATCHING');
+        sendCommand({
+            type: 'START_MUSIC',
+            initialProfile: initialState.musicProfile,
+            scale: initialScale,
+            chords: initialChords,
+            binauralFreq: initialState.brainwave.baseFrequency,
+            carrierFreq: initialState.brainwave.carrierFrequency,
+        });
+
+        setIsPlaying(true);
+        startPulseAnimation();
+        startGlowAnimation();
+        setupTimer();
+        setupFeedbackPrompts();
+
+        // Phase 2: After a brief matching period, begin ISO transition
+        const MATCHING_DURATION = 15000; // 15 seconds of matching first
+        setTimeout(() => {
+            if (!isMountedRef.current) return;
+            beginTransition();
+        }, MATCHING_DURATION);
+
+    }, [initialState, targetState, task]);
+
+    const beginTransition = useCallback(() => {
+        if (!isMountedRef.current) return;
+
+        console.log('[Session] Beginning ISO transition...');
+        setCurrentPhase('TRANSITIONING');
+
+        // Get target scale and chords
+        const targetScale = getScale(
+            targetState.musicProfile.scale.root,
+            targetState.musicProfile.scale.mode
+        );
+        const targetChords = getChordProgression(targetState.id);
+
+        // Calculate transition duration
+        const transitionSeconds = task.transitionTime * 60;
+
+        // Send transition command to engine
+        sendCommand({
+            type: 'TRANSITION',
+            targetProfile: targetState.musicProfile,
+            targetScale: targetScale,
+            targetChords: targetChords,
+            targetBinauralFreq: targetState.brainwave.targetFrequency,
+            targetCarrierFreq: targetState.brainwave.carrierFrequency,
+            durationSeconds: transitionSeconds,
+        });
+
+    }, [targetState, task]);
+
+    // ========================================================
+    // TIMERS & ANIMATIONS
+    // ========================================================
 
     const setupTimer = () => {
         timerRef.current = setInterval(() => {
@@ -108,11 +185,9 @@ export default function SessionScreen({ sessionConfig, onEnd }) {
     };
 
     const setupFeedbackPrompts = () => {
-        // Pergunta feedback a cada 3-5 minutos
         const intervalMinutes = 4;
         feedbackTimerRef.current = setInterval(() => {
-            // Usa ref para pegar estado mais recente
-            if (isMountedRef.current && currentStateRef.current === 'TRANSITIONING') {
+            if (isMountedRef.current && currentPhaseRef.current === 'TRANSITIONING') {
                 setShowFeedback(true);
             }
         }, intervalMinutes * 60 * 1000);
@@ -122,13 +197,13 @@ export default function SessionScreen({ sessionConfig, onEnd }) {
         animationRef.current = Animated.loop(
             Animated.sequence([
                 Animated.timing(pulseAnim, {
-                    toValue: 1.1,
-                    duration: 2000,
+                    toValue: 1.08,
+                    duration: 2500,
                     useNativeDriver: true,
                 }),
                 Animated.timing(pulseAnim, {
                     toValue: 1,
-                    duration: 2000,
+                    duration: 2500,
                     useNativeDriver: true,
                 }),
             ])
@@ -136,41 +211,54 @@ export default function SessionScreen({ sessionConfig, onEnd }) {
         animationRef.current.start();
     };
 
-    const handlePlayPause = async () => {
-        try {
-            if (isPlaying) {
-                await audioEngine.pause();
-                setIsPlaying(false);
-            } else {
-                await audioEngine.resume();
-                setIsPlaying(true);
-            }
-        } catch (error) {
-            console.error('Play/Pause error:', error);
+    const startGlowAnimation = () => {
+        glowAnimRef.current = Animated.loop(
+            Animated.sequence([
+                Animated.timing(glowAnim, {
+                    toValue: 1,
+                    duration: 3000,
+                    useNativeDriver: false,
+                }),
+                Animated.timing(glowAnim, {
+                    toValue: 0,
+                    duration: 3000,
+                    useNativeDriver: false,
+                }),
+            ])
+        );
+        glowAnimRef.current.start();
+    };
+
+    // ========================================================
+    // USER INTERACTIONS
+    // ========================================================
+
+    const handlePlayPause = () => {
+        if (isPlaying) {
+            sendCommand({ type: 'PAUSE' });
+            setIsPlaying(false);
+        } else {
+            sendCommand({ type: 'RESUME' });
+            setIsPlaying(true);
         }
     };
 
-    const handleVolumeChange = async (delta) => {
+    const handleVolumeChange = (delta) => {
         const newVolume = Math.max(0, Math.min(1, volume + delta));
         setVolume(newVolume);
-
-        try {
-            await audioEngine.setVolume(newVolume);
-        } catch (error) {
-            console.error('Volume change error:', error);
-        }
+        sendCommand({ type: 'VOLUME', volume: newVolume });
     };
 
     const handleFeedback = (response) => {
         setShowFeedback(false);
-
         if (response === 'ARRIVED') {
-            setCurrentState('ARRIVED');
-            // Mantém a frequência atual, reduz modulação
-        } else if (response === 'NOT_YET') {
-            // Continua transição
+            setCurrentPhase('ARRIVED');
         }
     };
+
+    // ========================================================
+    // HELPERS
+    // ========================================================
 
     const formatTime = (seconds) => {
         const mins = Math.floor(seconds / 60);
@@ -179,13 +267,54 @@ export default function SessionScreen({ sessionConfig, onEnd }) {
     };
 
     const getProgressPercentage = () => {
-        const transitionSeconds = task.transitionTime * 60;
-        return Math.min(100, (elapsedTime / transitionSeconds) * 100);
+        if (currentPhase === 'ARRIVED') return 100;
+        if (currentPhase === 'MATCHING') return 0;
+        return Math.round(transitionProgress * 100);
     };
+
+    const getPhaseLabel = () => {
+        switch (currentPhase) {
+            case 'INITIALIZING': return 'Preparando...';
+            case 'MATCHING': return 'Sintonizando com você...';
+            case 'TRANSITIONING': return 'Transicionando...';
+            case 'ARRIVED': return '✓ Estado alcançado!';
+            default: return '';
+        }
+    };
+
+    const getCurrentColor = () => {
+        if (currentPhase === 'ARRIVED') return targetState.color;
+        if (currentPhase === 'MATCHING') return initialState.color;
+        // Interpolate color during transition
+        return targetState.color;
+    };
+
+    const glowColor = glowAnim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [getCurrentColor() + '20', getCurrentColor() + '60'],
+    });
+
+    // ========================================================
+    // RENDER
+    // ========================================================
 
     return (
         <SafeAreaView style={styles.container}>
             <StatusBar barStyle="light-content" backgroundColor="#0A0E27" />
+
+            {/* Hidden WebView - Audio Engine */}
+            <View style={styles.engineContainer}>
+                <WebView
+                    ref={webviewRef}
+                    originWhitelist={['*']}
+                    source={{ html: SynthHTML }}
+                    onMessage={handleWebViewMessage}
+                    javaScriptEnabled={true}
+                    domStorageEnabled={true}
+                    mediaPlaybackRequiresUserAction={false}
+                    allowsInlineMediaPlayback={true}
+                />
+            </View>
 
             {/* Header */}
             <View style={styles.header}>
@@ -199,36 +328,47 @@ export default function SessionScreen({ sessionConfig, onEnd }) {
                 <View style={{ width: 40 }} />
             </View>
 
-            {/* Visualizador de Áudio */}
+            {/* Audio Visualizer */}
             <View style={styles.visualizerContainer}>
+                <Animated.View
+                    style={[
+                        styles.visualizerGlow,
+                        { backgroundColor: glowColor },
+                    ]}
+                />
                 <Animated.View
                     style={[
                         styles.visualizerCircle,
                         {
-                            backgroundColor: targetState.color + '40',
-                            borderColor: targetState.color,
+                            borderColor: getCurrentColor(),
                             transform: [{ scale: pulseAnim }],
                         }
                     ]}
                 >
                     <View style={styles.visualizerInner}>
                         <Text style={styles.visualizerIcon}>{task.icon}</Text>
-                        <Text style={styles.visualizerText}>
-                            {currentState === 'TRANSITIONING' ? 'Transicionando...' : 'Chegou!'}
-                        </Text>
+                        <Text style={styles.phaseText}>{getPhaseLabel()}</Text>
                         <Text style={styles.visualizerPercentage}>
-                            {Math.round(getProgressPercentage())}%
+                            {getProgressPercentage()}%
                         </Text>
                     </View>
                 </Animated.View>
 
-                {/* Progress Arc (visual) */}
+                {/* Progress Bar */}
                 <View style={styles.progressBar}>
-                    <View style={[styles.progressFill, { width: `${getProgressPercentage()}%` }]} />
+                    <View
+                        style={[
+                            styles.progressFill,
+                            {
+                                width: `${getProgressPercentage()}%`,
+                                backgroundColor: getCurrentColor(),
+                            }
+                        ]}
+                    />
                 </View>
             </View>
 
-            {/* Estado Indicator */}
+            {/* State Indicator */}
             <View style={styles.stateIndicator}>
                 <View style={styles.stateRow}>
                     <View style={styles.stateBadge}>
@@ -300,7 +440,7 @@ export default function SessionScreen({ sessionConfig, onEnd }) {
 
                 {/* Play/Pause */}
                 <TouchableOpacity
-                    style={styles.playButton}
+                    style={[styles.playButton, { backgroundColor: getCurrentColor() }]}
                     onPress={handlePlayPause}
                 >
                     <Text style={styles.playButtonIcon}>{isPlaying ? '⏸' : '▶'}</Text>
@@ -323,6 +463,12 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#0A0E27',
+    },
+    engineContainer: {
+        height: 0,
+        width: 0,
+        opacity: 0,
+        position: 'absolute',
     },
     header: {
         flexDirection: 'row',
@@ -363,11 +509,18 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingVertical: 40,
     },
+    visualizerGlow: {
+        position: 'absolute',
+        width: width * 0.75,
+        height: width * 0.75,
+        borderRadius: width * 0.375,
+    },
     visualizerCircle: {
         width: width * 0.6,
         height: width * 0.6,
         borderRadius: width * 0.3,
-        borderWidth: 3,
+        borderWidth: 2,
+        backgroundColor: 'rgba(255, 255, 255, 0.03)',
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -375,17 +528,17 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     visualizerIcon: {
-        fontSize: 60,
-        marginBottom: 16,
+        fontSize: 52,
+        marginBottom: 12,
     },
-    visualizerText: {
-        fontSize: 16,
-        color: '#FFFFFF',
+    phaseText: {
+        fontSize: 14,
+        color: '#8E9AAF',
         fontWeight: '600',
         marginBottom: 8,
     },
     visualizerPercentage: {
-        fontSize: 24,
+        fontSize: 28,
         color: '#60A5FA',
         fontWeight: '800',
     },
@@ -399,11 +552,11 @@ const styles = StyleSheet.create({
     },
     progressFill: {
         height: '100%',
-        backgroundColor: '#60A5FA',
+        borderRadius: 2,
     },
     stateIndicator: {
         paddingHorizontal: 20,
-        paddingVertical: 20,
+        paddingVertical: 16,
     },
     stateRow: {
         flexDirection: 'row',
@@ -526,7 +679,6 @@ const styles = StyleSheet.create({
         width: 64,
         height: 64,
         borderRadius: 32,
-        backgroundColor: '#60A5FA',
         alignItems: 'center',
         justifyContent: 'center',
         alignSelf: 'center',
@@ -538,20 +690,14 @@ const styles = StyleSheet.create({
     endButton: {
         paddingVertical: 16,
         borderRadius: 12,
-        backgroundColor: 'rgba(239, 68, 68, 0.2)',
+        backgroundColor: 'rgba(239, 68, 68, 0.15)',
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: '#EF4444',
+        borderColor: 'rgba(239, 68, 68, 0.4)',
     },
     endButtonText: {
         color: '#EF4444',
         fontSize: 16,
         fontWeight: '700',
-    },
-    engineContainer: {
-        height: 0,
-        width: 0,
-        opacity: 0,
-        position: 'absolute',
     },
 });
