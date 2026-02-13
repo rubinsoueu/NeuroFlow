@@ -1,22 +1,3 @@
-/**
- * NeuroFlow — Motor de Música Terapêutica Procedural
- *
- * Gera MÚSICA (melodias, harmonias, texturas) com binaural beats embutidos.
- * Baseado no Princípio ISO: matching → transição gradual → estado alvo.
- *
- * 5 CAMADAS:
- *   1. Binaural Beats (sine stereo, ~20% mix)
- *   2. Textura Ambiente (filtered noise + drone)
- *   3. Ritmo Sutil (shaped noise pulses)
- *   4. Harmonia/Pad (chord progressions)
- *   5. Melodia Procedural (arpeggios, scale patterns)
- *
- * Referências científicas:
- *   - NIH: Brainwave entrainment via binaural beats
- *   - Frontiers: Musical mode-emotion correlation
- *   - ISO Principle (1948): Match → Transition → Target
- */
-
 export const SynthHTML = `
 <!DOCTYPE html>
 <html>
@@ -32,15 +13,15 @@ export const SynthHTML = `
         // ========================================================
         const engineState = {
             isPlaying: false,
-            currentProfile: null,
-            targetProfile: null,
+            currentProfile: null, // Full profile (initialState or targetState)
+            targetProfile: null,  // Full profile (targetState)
             transitionProgress: 0,    // 0 to 1
             transitionDuration: 60,   // seconds
             transitionStartTime: null,
             transitionTimer: null,
             volume: 0.7,
             // Current musical state (interpolated during transition)
-            current: {
+            current: { // These will be directly interpolated values
                 tempoBPM: 72,
                 timbreBrightness: 0.4,
                 harmonicComplexity: 0.3,
@@ -49,10 +30,13 @@ export const SynthHTML = `
                 dynamicRange: 0.2,
                 binauralFreq: 10,
                 carrierFreq: 200,
+                // Effects are now part of the music profile
                 reverbDecay: 3.0,
                 reverbWet: 0.35,
                 delayTime: 0.25,
                 delayWet: 0.08,
+                chorusFreq: 0.0,
+                chorusWet: 0.0,
             },
             scale: [],
             chords: [],
@@ -74,12 +58,12 @@ export const SynthHTML = `
 
         const binauralLeft = new Tone.Oscillator({
             type: 'sine',
-            frequency: 200,
+            frequency: 200, // Initial value, will be set by profile
             volume: -20,
         });
         const binauralRight = new Tone.Oscillator({
             type: 'sine',
-            frequency: 210,
+            frequency: 210, // Initial value, will be set by profile
             volume: -20,
         });
 
@@ -91,13 +75,13 @@ export const SynthHTML = `
         leftGain.connect(binauralMerger, 0, 0);
         rightGain.connect(binauralMerger, 0, 1);
 
-        // ========================================================
-        // LAYER 2: AMBIENT TEXTURE (filtered noise + drone)
-        // ========================================================
+        // ========================================================\
+        // LAYER 2: AMBIENT TEXTURE (filtered noise + drone)\
+        // ========================================================\
         const ambientNoise = new Tone.Noise('pink');
         const ambientFilter = new Tone.Filter({
             type: 'lowpass',
-            frequency: 500,
+            frequency: 500, // Initial value, will be set by profile
             rolloff: -24,
         });
         const ambientGain = new Tone.Gain(0.12).toDestination();
@@ -110,13 +94,13 @@ export const SynthHTML = `
             envelope: { attack: 4, decay: 0, sustain: 1, release: 4 },
         });
         const droneGain = new Tone.Gain(0.08).toDestination();
-        const droneFilter = new Tone.Filter({ type: 'lowpass', frequency: 200 });
+        const droneFilter = new Tone.Filter({ type: 'lowpass', frequency: 200 }); // Initial value
         droneSynth.connect(droneFilter);
         droneFilter.connect(droneGain);
 
-        // ========================================================
-        // LAYER 3: SUBTLE RHYTHM (shaped noise pulses)
-        // ========================================================
+        // ========================================================\
+        // LAYER 3: SUBTLE RHYTHM (shaped noise pulses)\
+        // ========================================================\
         const rhythmNoise = new Tone.NoiseSynth({
             noise: { type: 'white' },
             envelope: {
@@ -128,19 +112,19 @@ export const SynthHTML = `
         });
         const rhythmFilter = new Tone.Filter({
             type: 'bandpass',
-            frequency: 3000,
+            frequency: 3000, // Initial value
             Q: 2,
         });
         const rhythmGain = new Tone.Gain(0.08).toDestination();
         rhythmNoise.connect(rhythmFilter);
         rhythmFilter.connect(rhythmGain);
 
-        // ========================================================
-        // LAYER 4: HARMONY / PAD (chord progressions)
-        // ========================================================
+        // ========================================================\
+        // LAYER 4: HARMONY / PAD (chord progressions)\
+        // ========================================================\
         const padSynth = new Tone.PolySynth(Tone.Synth, {
             maxPolyphony: 8,
-            oscillator: { type: 'sine' },
+            oscillator: { type: 'sine' }, // Will be set by profile
             envelope: {
                 attack: 3,
                 decay: 1,
@@ -150,12 +134,12 @@ export const SynthHTML = `
         });
         const padFilter = new Tone.Filter({
             type: 'lowpass',
-            frequency: 800,
+            frequency: 800, // Initial value
             rolloff: -12,
         });
-        const padReverb = new Tone.Reverb({ decay: 4, wet: 0.4 });
+        const padReverb = new Tone.Reverb({ decay: 4, wet: 0.4 }); // Initial values
         const padChorus = new Tone.Chorus({
-            frequency: 1.5,
+            frequency: 1.5, // Initial values
             delayTime: 3.5,
             depth: 0.7,
             wet: 0.15,
@@ -166,13 +150,13 @@ export const SynthHTML = `
         padReverb.connect(padChorus);
         padChorus.connect(padGain);
 
-        // ========================================================
-        // LAYER 5: PROCEDURAL MELODY (FM synth, arpeggios)
-        // ========================================================
+        // ========================================================\
+        // LAYER 5: PROCEDURAL MELODY (FM synth, arpeggios)\
+        // ========================================================\
         const melodySynth = new Tone.FMSynth({
-            harmonicity: 3,
-            modulationIndex: 0.8,
-            oscillator: { type: 'sine' },
+            harmonicity: 3,       // Initial value
+            modulationIndex: 0.8, // Initial value
+            oscillator: { type: 'sine' }, // Initial value
             modulation: { type: 'sine' },
             envelope: {
                 attack: 0.3,
@@ -187,9 +171,9 @@ export const SynthHTML = `
                 release: 0.5,
             },
         });
-        const melodyReverb = new Tone.Reverb({ decay: 3, wet: 0.35 });
+        const melodyReverb = new Tone.Reverb({ decay: 3, wet: 0.35 }); // Initial values
         const melodyDelay = new Tone.FeedbackDelay({
-            delayTime: 0.25,
+            delayTime: 0.25, // Initial values
             feedback: 0.15,
             wet: 0.1,
         });
@@ -198,15 +182,15 @@ export const SynthHTML = `
         melodyReverb.connect(melodyDelay);
         melodyDelay.connect(melodyGain);
 
-        // ========================================================
-        // MASTER EFFECTS & VOLUME
-        // ========================================================
+        // ========================================================\
+        // MASTER EFFECTS & VOLUME\
+        // ========================================================\
         // (each layer routes to destination individually for
         //  independent volume control)
 
-        // ========================================================
-        // MUSICAL LOGIC
-        // ========================================================
+        // ========================================================\
+        // MUSICAL LOGIC\
+        // ========================================================\
 
         /**
          * Map timbreBrightness (0-1) to filter frequency and oscillator params
@@ -253,10 +237,10 @@ export const SynthHTML = `
         }
 
         /**
-         * Apply effects based on current profile
+         * Apply effects based on current profile's effects parameters
          */
-        function applyEffects(profile, rampSec) {
-            const fx = profile.effects || {};
+        function applyEffects(effectsParams, rampSec) { // Now accepts effectsParams directly
+            const fx = effectsParams || {};
             rampSec = rampSec || 5;
 
             // Reverb
@@ -484,9 +468,9 @@ export const SynthHTML = `
         // ========================================================
 
         /**
-         * Start the music engine with given profile
+         * Start the music engine with given profile, scale, and chords
          */
-        function startMusic(initialProfile, scale, chords) {
+        function startMusic(initialFullProfile, scale, chords) { // Accepts full initial profile
             if (engineState.isPlaying) return;
 
             Tone.start().then(() => {
@@ -499,13 +483,18 @@ export const SynthHTML = `
                 engineState.chordIndex = 0;
                 engineState.melodyIndex = Math.floor(engineState.scale.length / 2);
 
-                // Apply initial profile
-                applyMusicProfile(initialProfile);
+                // Apply initial music profile
+                applyMusicProfile(initialFullProfile.musicProfile); // Pass only musicProfile
 
                 // Set BPM
-                Tone.Transport.bpm.value = initialProfile.tempoBPM || 72;
+                Tone.Transport.bpm.value = initialFullProfile.musicProfile.tempoBPM || 72;
 
-                // Start binaural
+                // Start binaural with initial brainwave params
+                setBinaural(
+                    initialFullProfile.brainwave.baseFrequency || 10,
+                    initialFullProfile.brainwave.carrierFrequency || 200,
+                    2 // quick ramp for start
+                );
                 binauralLeft.start();
                 binauralRight.start();
 
@@ -513,8 +502,7 @@ export const SynthHTML = `
                 ambientNoise.start();
 
                 // Start drone
-                const droneNote = engineState.scale[0] || 'C2';
-                // Get root note an octave lower for the drone
+                const droneNote = engineState.scale[0] || 'C2'; // Use the root of the scale
                 droneSynth.triggerAttack(droneNote);
 
                 // Start musical loops
@@ -524,7 +512,7 @@ export const SynthHTML = `
                 Tone.Transport.start();
 
                 engineState.isPlaying = true;
-                engineState.currentProfile = initialProfile;
+                engineState.currentProfile = initialFullProfile; // Store full profile
                 sendLog('Music engine started - 5 layers active');
             }).catch(err => {
                 sendLog('ERROR starting Tone.js: ' + err.message);
@@ -559,32 +547,32 @@ export const SynthHTML = `
         /**
          * Apply a music profile to all layers
          */
-        function applyMusicProfile(profile, rampSec) {
-            if (!profile) return;
+        function applyMusicProfile(musicProfile, rampSec) { // Renamed to musicProfile
+            if (!musicProfile) return;
             rampSec = rampSec || 5;
 
             // Update current state
-            engineState.current.tempoBPM = profile.tempoBPM || 72;
-            engineState.current.timbreBrightness = profile.timbreBrightness || 0.4;
-            engineState.current.harmonicComplexity = profile.harmonicComplexity || 0.3;
-            engineState.current.rhythmDensity = profile.rhythmDensity || 0.3;
-            engineState.current.melodicActivity = profile.melodicActivity || 0.25;
-            engineState.current.dynamicRange = profile.dynamicRange || 0.2;
+            engineState.current.tempoBPM = musicProfile.tempoBPM || 72;
+            engineState.current.timbreBrightness = musicProfile.timbreBrightness || 0.4;
+            engineState.current.harmonicComplexity = musicProfile.harmonicComplexity || 0.3;
+            engineState.current.rhythmDensity = musicProfile.rhythmDensity || 0.3;
+            engineState.current.melodicActivity = musicProfile.melodicActivity || 0.25;
+            engineState.current.dynamicRange = musicProfile.dynamicRange || 0.2;
 
             // Apply timbre with dynamic ramp
-            applyTimbre(profile.timbreBrightness || 0.4, rampSec);
+            applyTimbre(musicProfile.timbreBrightness || 0.4, rampSec);
 
             // Apply effects
-            applyEffects(profile, rampSec);
+            applyEffects(musicProfile.effects, rampSec); // Pass only effects parameters
 
             // Set rhythm gain based on density
-            rhythmGain.gain.rampTo(0.03 + (profile.rhythmDensity || 0.3) * 0.12, rampSec);
+            rhythmGain.gain.rampTo(0.03 + (musicProfile.rhythmDensity || 0.3) * 0.12, rampSec);
 
             // Set melody gain based on activity
-            melodyGain.gain.rampTo(0.08 + (profile.melodicActivity || 0.25) * 0.15, rampSec);
+            melodyGain.gain.rampTo(0.08 + (musicProfile.melodicActivity || 0.25) * 0.15, rampSec);
 
             // Set pad gain based on complexity
-            padGain.gain.rampTo(0.1 + (profile.harmonicComplexity || 0.3) * 0.15, rampSec);
+            padGain.gain.rampTo(0.1 + (musicProfile.harmonicComplexity || 0.3) * 0.15, rampSec);
         }
 
         /**
@@ -612,9 +600,7 @@ export const SynthHTML = `
          * ISO Principle: Transition from current to target profile over time
          * Linearly interpolates ALL musical parameters
          */
-        function startTransition(targetProfile, targetScale, targetChords,
-                                  targetBinauralFreq, targetCarrierFreq,
-                                  durationSeconds) {
+        function startTransition(targetFullProfile, targetScale, targetChords, durationSeconds) { // Accepts full target profile
             // Store initial snapshot for interpolation
             const startSnapshot = {
                 tempoBPM: engineState.current.tempoBPM,
@@ -625,10 +611,10 @@ export const SynthHTML = `
                 dynamicRange: engineState.current.dynamicRange,
                 binauralFreq: engineState.current.binauralFreq,
                 carrierFreq: engineState.current.carrierFreq,
-                effects: { ...(engineState.currentProfile?.effects || {}) },
+                effects: { ...(engineState.currentProfile?.musicProfile?.effects || {}) }, // Use musicProfile.effects
             };
 
-            engineState.targetProfile = targetProfile;
+            engineState.targetProfile = targetFullProfile; // Store full profile
             engineState.transitionDuration = durationSeconds;
             engineState.transitionStartTime = Tone.now();
             engineState.transitionProgress = 0;
@@ -639,86 +625,71 @@ export const SynthHTML = `
             }
 
             // Gradual scale/chord crossfade instead of immediate swap
-            // The melody and chord loops will probabilistically blend
-            // old and target scales/chords based on crossfade progress
             engineState.oldScale = [...engineState.scale];
             engineState.oldChords = [...engineState.chords];
             engineState.targetScale = targetScale || engineState.scale;
             engineState.targetChords = targetChords || engineState.chords;
             engineState.scaleCrossfadeProgress = 0;
-            // Keep current scale as reference, will be updated at completion
             engineState.melodyIndex = Math.min(
                 engineState.melodyIndex,
                 Math.max((targetScale || engineState.scale).length - 1, 0)
             );
 
-            // Ultra-smooth transition: 500ms ticks with 3s Tone.js ramps
-            // Each ramp overlaps the next tick, creating continuous interpolation
             const UPDATE_INTERVAL = 500; // ms
-            const RAMP_SEC = 3; // Longer ramps = smoother overlap between ticks
+            const RAMP_SEC = 3; 
             engineState.transitionTimer = setInterval(() => {
                 const elapsed = Tone.now() - engineState.transitionStartTime;
                 const progress = Math.min(1, elapsed / durationSeconds);
                 engineState.transitionProgress = progress;
 
-                // Lerp helper
                 const lerp = (a, b, t) => a + (b - a) * t;
 
-                // Smootherstep easing (Ken Perlin, 5th order polynomial)
-                // C2 continuity: zero 1st AND 2nd derivatives at t=0 and t=1
-                // Produces imperceptible entry/exit from the transition
                 const t = progress;
                 const baseEased = t * t * t * (t * (t * 6 - 15) + 10);
 
-                // Organic micro-variation: subtle jitter (±1.5% of delta)
-                // Strongest in the middle of the transition, zero at endpoints
                 const jitter = (Math.random() - 0.5) * 0.03;
-                const bellShape = 1 - Math.abs(2 * baseEased - 1); // peaks at eased=0.5
+                const bellShape = 1 - Math.abs(2 * baseEased - 1); 
                 const eased = Math.max(0, Math.min(1, baseEased + jitter * bellShape));
 
-                // Update scale crossfade progress (follows the main easing)
                 engineState.scaleCrossfadeProgress = eased;
 
-                // Interpolate all musical parameters
-                const interpolated = {
-                    tempoBPM: lerp(startSnapshot.tempoBPM, targetProfile.tempoBPM, eased),
-                    timbreBrightness: lerp(startSnapshot.timbreBrightness, targetProfile.timbreBrightness, eased),
-                    harmonicComplexity: lerp(startSnapshot.harmonicComplexity, targetProfile.harmonicComplexity, eased),
-                    rhythmDensity: lerp(startSnapshot.rhythmDensity, targetProfile.rhythmDensity, eased),
-                    melodicActivity: lerp(startSnapshot.melodicActivity, targetProfile.melodicActivity, eased),
-                    dynamicRange: lerp(startSnapshot.dynamicRange, targetProfile.dynamicRange, eased),
-                    effects: {},
+                // Interpolate all musical parameters using targetFullProfile.musicProfile
+                const interpolatedMusicProfile = {
+                    tempoBPM: lerp(startSnapshot.tempoBPM, targetFullProfile.musicProfile.tempoBPM, eased),
+                    timbreBrightness: lerp(startSnapshot.timbreBrightness, targetFullProfile.musicProfile.timbreBrightness, eased),
+                    harmonicComplexity: lerp(startSnapshot.harmonicComplexity, targetFullProfile.musicProfile.harmonicComplexity, eased),
+                    rhythmDensity: lerp(startSnapshot.rhythmDensity, targetFullProfile.musicProfile.rhythmDensity, eased),
+                    melodicActivity: lerp(startSnapshot.melodicActivity, targetFullProfile.musicProfile.melodicActivity, eased),
+                    dynamicRange: lerp(startSnapshot.dynamicRange, targetFullProfile.musicProfile.dynamicRange, eased),
+                    effects: {}, // Placeholder, will be interpolated below
                 };
 
                 // Interpolate effects
                 const startFx = startSnapshot.effects;
-                const targetFx = targetProfile.effects || {};
-                interpolated.effects.reverbDecay = lerp(startFx.reverbDecay || 3, targetFx.reverbDecay || 3, eased);
-                interpolated.effects.reverbWet = lerp(startFx.reverbWet || 0.3, targetFx.reverbWet || 0.3, eased);
-                interpolated.effects.delayTime = lerp(startFx.delayTime || 0.25, targetFx.delayTime || 0.25, eased);
-                interpolated.effects.delayWet = lerp(startFx.delayWet || 0.1, targetFx.delayWet || 0.1, eased);
-                interpolated.effects.chorusWet = lerp(startFx.chorusWet || 0, targetFx.chorusWet || 0, eased);
+                const targetFx = targetFullProfile.musicProfile.effects || {};
+                interpolatedMusicProfile.effects.reverbDecay = lerp(startFx.reverbDecay || 3, targetFx.reverbDecay || 3, eased);
+                interpolatedMusicProfile.effects.reverbWet = lerp(startFx.reverbWet || 0.3, targetFx.reverbWet || 0.3, eased);
+                interpolatedMusicProfile.effects.delayTime = lerp(startFx.delayTime || 0.25, targetFx.delayTime || 0.25, eased);
+                interpolatedMusicProfile.effects.delayWet = lerp(startFx.delayWet || 0.1, targetFx.delayWet || 0.1, eased);
+                interpolatedMusicProfile.effects.chorusWet = lerp(startFx.chorusWet || 0, targetFx.chorusWet || 0, eased);
 
-                // Apply interpolated profile with dynamic ramp time
-                applyMusicProfile(interpolated, RAMP_SEC);
+                // Apply interpolated music profile
+                applyMusicProfile(interpolatedMusicProfile, RAMP_SEC);
 
-                // BPM ramp (slightly longer to avoid tempo glitches)
-                Tone.Transport.bpm.rampTo(interpolated.tempoBPM, RAMP_SEC);
+                // BPM ramp 
+                Tone.Transport.bpm.rampTo(interpolatedMusicProfile.tempoBPM, RAMP_SEC);
 
-                // Binaural ramp
-                const interpBinaural = lerp(startSnapshot.binauralFreq, targetBinauralFreq, eased);
-                const interpCarrier = lerp(startSnapshot.carrierFreq, targetCarrierFreq, eased);
+                // Binaural ramp using targetFullProfile.brainwave
+                const interpBinaural = lerp(startSnapshot.binauralFreq, targetFullProfile.brainwave.targetFrequency, eased);
+                const interpCarrier = lerp(startSnapshot.carrierFreq, targetFullProfile.brainwave.carrierFrequency, eased);
                 setBinaural(interpBinaural, interpCarrier, RAMP_SEC);
 
-                // Send progress to React Native
                 sendProgress(progress);
 
-                // Transition complete
                 if (progress >= 1) {
                     clearInterval(engineState.transitionTimer);
                     engineState.transitionTimer = null;
-                    engineState.currentProfile = targetProfile;
-                    // Finalize scale/chord crossfade
+                    engineState.currentProfile = targetFullProfile; // Store full profile
                     engineState.scale = engineState.targetScale;
                     engineState.chords = engineState.targetChords;
                     engineState.scaleCrossfadeProgress = 1;
@@ -731,7 +702,7 @@ export const SynthHTML = `
 
             sendLog('ISO Transition started: ' + durationSeconds + 's, ' +
                     startSnapshot.tempoBPM.toFixed(0) + 'BPM -> ' +
-                    targetProfile.tempoBPM + 'BPM');
+                    targetFullProfile.musicProfile.tempoBPM + 'BPM');
         }
 
         /**
@@ -765,9 +736,9 @@ export const SynthHTML = `
             sendLog('Volume: ' + (engineState.volume * 100).toFixed(0) + '%');
         }
 
-        // ========================================================
-        // COMMUNICATION WITH REACT NATIVE
-        // ========================================================
+        // ========================================================\
+        // COMMUNICATION WITH REACT NATIVE\
+        // ========================================================\
 
         function sendLog(message) {
             sendMessage({ type: 'LOG', message: message, timestamp: Date.now() });
@@ -787,9 +758,9 @@ export const SynthHTML = `
             }
         }
 
-        // ========================================================
-        // MESSAGE HANDLER (receives commands from React Native)
-        // ========================================================
+        // ========================================================\
+        // MESSAGE HANDLER (receives commands from React Native)\
+        // ========================================================\
 
         window.addEventListener("message", (event) => {
             try {
@@ -798,23 +769,17 @@ export const SynthHTML = `
                 switch(data.type) {
                     case 'START_MUSIC':
                         startMusic(
-                            data.initialProfile,
+                            data.initialProfile, // Passa o perfil COMPLETO
                             data.scale,
                             data.chords
                         );
-                        // If binaural params provided, set them
-                        if (data.binauralFreq !== undefined) {
-                            setBinaural(data.binauralFreq, data.carrierFreq || 200, 2);
-                        }
                         break;
 
                     case 'TRANSITION':
                         startTransition(
-                            data.targetProfile,
+                            data.targetProfile, // Passa o perfil COMPLETO
                             data.targetScale,
                             data.targetChords,
-                            data.targetBinauralFreq || 10,
-                            data.targetCarrierFreq || 200,
                             data.durationSeconds || 60
                         );
                         break;
@@ -855,9 +820,9 @@ export const SynthHTML = `
             window.dispatchEvent(new MessageEvent('message', { data: event.data }));
         });
 
-        // ========================================================
-        // INIT
-        // ========================================================
+        // ========================================================\
+        // INIT\
+        // ========================================================\
         document.addEventListener('DOMContentLoaded', () => {
             sendLog('NeuroFlow Music Engine v2.0 ready');
             sendMessage({ type: 'ENGINE_READY' });
