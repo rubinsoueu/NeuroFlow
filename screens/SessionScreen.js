@@ -11,7 +11,8 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { SynthHTML } from '../audio/SynthEngine';
-import { getScale, getChordProgression, getLayerConfig } from '../data/FrequencyMappings';
+import { EMOTIONAL_STATES, TARGET_STATES } from '../data/EmotionalStates';
+import { getScaleNotes, getChordsFromScale } from '../utils/MusicTheory';
 
 const { width } = Dimensions.get('window');
 
@@ -111,19 +112,22 @@ export default function SessionScreen({ sessionConfig, onEnd }) {
         console.log('[Session] Initial:', initialState.id, '→ Target:', targetState.id);
 
         // Get scale and chords for initial state (ISO matching)
-        const initialScale = getScale(
+        const initialScaleNotes = getScaleNotes(
             initialState.musicProfile.scale.root,
             initialState.musicProfile.scale.mode
         );
-        const initialChords = getChordProgression(initialState.id);
+        const initialChords = getChordsFromScale(
+            initialState.musicProfile.scale.root,
+            initialState.musicProfile.scale.mode
+        );
 
         // Phase 1: Start with music that MATCHES the user's current state
         setCurrentPhase('MATCHING');
         sendCommand({
             type: 'START_MUSIC',
-            initialProfile: initialState.musicProfile,
-            scale: initialScale,
-            chords: initialChords,
+            initialProfile: initialState.musicProfile, // Passa o perfil completo
+            scale: initialScaleNotes,                  // Escala gerada
+            chords: initialChords,                     // Acordes gerados
             binauralFreq: initialState.brainwave.baseFrequency,
             carrierFreq: initialState.brainwave.carrierFrequency,
         });
@@ -152,11 +156,14 @@ export default function SessionScreen({ sessionConfig, onEnd }) {
         setCurrentPhase('TRANSITIONING');
 
         // Get target scale and chords
-        const targetScale = getScale(
+        const targetScaleNotes = getScaleNotes(
             targetState.musicProfile.scale.root,
             targetState.musicProfile.scale.mode
         );
-        const targetChords = getChordProgression(targetState.id);
+        const targetChords = getChordsFromScale(
+            targetState.musicProfile.scale.root,
+            targetState.musicProfile.scale.mode
+        );
 
         // Calculate transition duration
         const transitionSeconds = task.transitionTime * 60;
@@ -164,9 +171,9 @@ export default function SessionScreen({ sessionConfig, onEnd }) {
         // Send transition command to engine
         sendCommand({
             type: 'TRANSITION',
-            targetProfile: targetState.musicProfile,
-            targetScale: targetScale,
-            targetChords: targetChords,
+            targetProfile: targetState.musicProfile, // Passa o perfil completo
+            targetScale: targetScaleNotes,             // Escala gerada
+            targetChords: targetChords,                // Acordes gerados
             targetBinauralFreq: targetState.brainwave.targetFrequency,
             targetCarrierFreq: targetState.brainwave.carrierFrequency,
             durationSeconds: transitionSeconds,
